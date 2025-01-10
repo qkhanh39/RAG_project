@@ -17,16 +17,39 @@ def load_llm():
     )
     return llm
 
-def creat_prompt(template):
+def create_prompt(template):
     prompt = PromptTemplate(template = template, input_variables=["context", "question"])
     return prompt
 
+def create_retriver(vectorstore, collection_name: str = "data_test"):
+    
+    milvus_retriever = vectorstore.as_retriever(
+            search_type="similarity", 
+            search_kwargs={"k": 8}
+    )
+    
+    documents = [
+            Document(page_content=doc.page_content, metadata=doc.metadata)
+            for doc in vectorstore.similarity_search("", k=100)
+    ]
+    
+    bm25_retriever = BM25Retriever.from_documents(documents)
+    bm25_retriever.k = 8
 
-def create_qa_chain(prompt, llm, db):
+    ensemble_retriever = EnsembleRetriever(
+            retrievers=[milvus_retriever, bm25_retriever],
+            weights=[0.6, 0.4]
+    )
+    return ensemble_retriever
+
+
+def create_qa_chain(prompt, llm, vectorstore):
+    ensenble_retriever = create_retriver(vectorstore)
+    
     llm_chain = RetrievalQA.from_chain_type(
         llm = llm,
         chain_type= "stuff",
-        retriever = db.as_retriever(search_type="similarity", search_kwargs = {"k":5}),
+        retriever = ensenble_retriever,
         return_source_documents = True,
         chain_type_kwargs= {'prompt': prompt}
     )
@@ -34,43 +57,50 @@ def create_qa_chain(prompt, llm, db):
 
 
 def initialize_chain(collection_name: str = "data_test"):
-    
-    
-    db = connect_to_milvus('http://localhost:19530', collection_name)
+    vectorstore = connect_to_milvus('http://localhost:19530', collection_name)
+
     llm = load_llm()
-    template = """<|im_start|>system\nSử dụng thông tin sau đây để trả lời câu hỏi. Bắt buộc đưa ra câu trả lời nếu có kết quả trả về từ cơ sở dữ liệu\n
-    {context}<|im_end|>\n<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant"""
-    prompt = creat_prompt(template)
-    llm_chain  = create_qa_chain(prompt, llm, db)
+    # template = """<|im_start|>system\nSử dụng thông tin sau đây để trả lời câu hỏi. Bắt buộc đưa ra câu trả lời nếu có kết quả trả về từ cơ sở dữ liệu\n
+    # {context}<|im_end|>\n<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant"""
+    template = """"
+    Sử dụng thông tin đã cho để trả lời các câu hỏi.
+    Nếu thông tin không đủ để đưa ra câu trả lời chính xác, hãy đưa ra câu trả lời dựa trên phỏng đoán hợp lý.
+    Context: {context}
+    Question: {question}
+    """
+    prompt = create_prompt(template)
+    llm_chain  = create_qa_chain(prompt, llm, vectorstore)
     
-    # return llm_chain
-    return llm_chain, db
-
-
-def query_and_print(chain, db, question: str, top_k: int = 3):
-    # Use the retriever directly to get the top-k vectors
-    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": top_k})
-    docs = retriever.invoke(question)
+    return llm_chain
+    # return llm_chain, vectorstore
     
-    print(f"\nTop-{top_k} Retrieved Documents:")
-    for i, doc in enumerate(docs, start=1):
-        print(f"\nDocument {i}:")
-        print(f"Content: {doc.page_content}")
-        print(f"Metadata: {doc.metadata}")
+
+
+
+# def query_and_print(chain, db, question: str, top_k: int = 3):
+#     # Use the retriever directly to get the top-k vectors
+#     retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": top_k})
+#     docs = retriever.invoke("Điều 31 nói điều gì?")
     
-    # Run the question through the QA chain
-    print("\nRunning the QA Chain...")
-    response = chain.invoke({"query": question})
-    print(f"\nLLM Response: {response}")
+#     print(f"\nTop-{top_k} Retrieved Documents:")
+#     for i, doc in enumerate(docs, start=1):
+#         print(f"\nDocument {i}:")
+#         print(f"Content: {doc.page_content}")
+#         print(f"Metadata: {doc.metadata}")
+    
+#     # Run the question through the QA chain
+#     print("\nRunning the QA Chain...")
+#     response = chain.invoke({"query": question})
+#     print(f"\nLLM Response: {response}")
 
 
 
-# Initialize the chain and database
-llm_chain, db = initialize_chain(collection_name="data_test")
+# # Initialize the chain and database
+# llm_chain, db = initialize_chain(collection_name="data_test")
 
-# Ask a question and print results
-question = "Tại chương V, điều 58, trong văn bản có nói người lái xe khi điều khiển phương tiện phải mang theo các giấy tờ gì?"
-query_and_print(llm_chain, db, question, top_k=5)
+# # Ask a question and print results
+# question = "Tại chương V, điều 58, trong văn bản có nói người lái xe khi điều khiển phương tiện phải mang theo các giấy tờ gì?"
+# query_and_print(llm_chain, db, question, top_k=10)
 
 
 
