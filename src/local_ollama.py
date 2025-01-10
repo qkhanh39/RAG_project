@@ -26,7 +26,7 @@ def create_qa_chain(prompt, llm, db):
     llm_chain = RetrievalQA.from_chain_type(
         llm = llm,
         chain_type= "stuff",
-        retriever = db.as_retriever(search_kwargs = {"k":3}),
+        retriever = db.as_retriever(search_type="similarity", search_kwargs = {"k":5}),
         return_source_documents = True,
         chain_type_kwargs= {'prompt': prompt}
     )
@@ -38,19 +38,19 @@ def initialize_chain(collection_name: str = "data_test"):
     
     db = connect_to_milvus('http://localhost:19530', collection_name)
     llm = load_llm()
-    template = """<|im_start|>system\nSử dụng thông tin sau đây để trả lời câu hỏi. Nếu bạn không tìm thấy câu trả lời ở thông tin tôi cung cấp, hãy nói không biết, đừng cố tạo ra câu trả lời\n
+    template = """<|im_start|>system\nSử dụng thông tin sau đây để trả lời câu hỏi. Bắt buộc đưa ra câu trả lời nếu có kết quả trả về từ cơ sở dữ liệu\n
     {context}<|im_end|>\n<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant"""
     prompt = creat_prompt(template)
     llm_chain  = create_qa_chain(prompt, llm, db)
     
-    
+    # return llm_chain
     return llm_chain, db
 
 
 def query_and_print(chain, db, question: str, top_k: int = 3):
     # Use the retriever directly to get the top-k vectors
-    retriever = db.as_retriever(search_kwargs={"k": top_k})
-    docs = retriever.get_relevant_documents(question)
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": top_k})
+    docs = retriever.invoke(question)
     
     print(f"\nTop-{top_k} Retrieved Documents:")
     for i, doc in enumerate(docs, start=1):
@@ -69,8 +69,8 @@ def query_and_print(chain, db, question: str, top_k: int = 3):
 llm_chain, db = initialize_chain(collection_name="data_test")
 
 # Ask a question and print results
-question = "Có bao nhiêu loại tài khoản số đẹp?"
-query_and_print(llm_chain, db, question, top_k=3)
+question = "Tại chương V, điều 58, trong văn bản có nói người lái xe khi điều khiển phương tiện phải mang theo các giấy tờ gì?"
+query_and_print(llm_chain, db, question, top_k=5)
 
 
 
