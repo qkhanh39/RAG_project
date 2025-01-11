@@ -9,6 +9,15 @@ from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 
+
+
+
+
+from sentence_transformers import CrossEncoder
+
+
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+
 def load_llm():
     llm = ChatOllama(
         model="llama3.1", 
@@ -17,16 +26,59 @@ def load_llm():
     )
     return llm
 
-def creat_prompt(template):
+def create_prompt(template):
     prompt = PromptTemplate(template = template, input_variables=["context", "question"])
     return prompt
 
+def create_prompt(template):
+    # Phân chia template thành các loại tin nhắn
+    system_message = SystemMessagePromptTemplate.from_template(
+        """Below is an instruction that describes a task, paired with an input that provides further context.
+        Your task is to answer the user's query using only the retrieved information from the database.
+        Do not provide answers based on assumptions or external knowledge. 
+        If the retrieved information does not contain enough details, respond with 'I don't know'.
+        Prioritize the top context. \n
+        Context information is below.
+        ---------------------
+        {context}
+        ---------------------"""
+    )
+    user_message = HumanMessagePromptTemplate.from_template(
+        """Given the context information and not prior knowledge, answer the query.
+        {question}"""
+    )
+    prompt = ChatPromptTemplate.from_messages([system_message, user_message])
+    return prompt
+def create_retriver(vectorstore, collection_name: str = "data_test"):
+    
+    milvus_retriever = vectorstore.as_retriever(
+            search_type="similarity", 
+            search_kwargs={"k": 4}
+    )
+    
+    documents = [
+            Document(page_content=doc.page_content, metadata=doc.metadata)
+            for doc in vectorstore.similarity_search("", k=100)
+    ]
+    
+    bm25_retriever = BM25Retriever.from_documents(documents)
+    bm25_retriever.k = 1
 
-def create_qa_chain(prompt, llm, db):
+    ensemble_retriever = EnsembleRetriever(
+            retrievers=[milvus_retriever, bm25_retriever],
+            weights=[0.7, 0.3]
+    )
+    return ensemble_retriever
+
+
+
+def create_qa_chain(prompt, llm, vectorstore):
+    ensenble_retriever = create_retriver(vectorstore)
+    
     llm_chain = RetrievalQA.from_chain_type(
         llm = llm,
         chain_type= "stuff",
-        retriever = db.as_retriever(search_kwargs = {"k":3}),
+        retriever = ensenble_retriever,
         return_source_documents = True,
         chain_type_kwargs= {'prompt': prompt}
     )
@@ -34,43 +86,64 @@ def create_qa_chain(prompt, llm, db):
 
 
 def initialize_chain(collection_name: str = "data_test"):
-    
-    
-    db = connect_to_milvus('http://localhost:19530', collection_name)
+    vectorstore = connect_to_milvus('http://localhost:19530', collection_name)
+
     llm = load_llm()
-    template = """<|im_start|>system\nSử dụng thông tin sau đây để trả lời câu hỏi. Nếu bạn không tìm thấy câu trả lời ở thông tin tôi cung cấp, hãy nói không biết, đừng cố tạo ra câu trả lời\n
-    {context}<|im_end|>\n<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant"""
-    prompt = creat_prompt(template)
-    llm_chain  = create_qa_chain(prompt, llm, db)
+    template = (
+        """<|im_start|>system
+        Below is an instruction that describes a task, paired with an input that provides further context.
+        Your task is to answer the user's query using only the retrieved information from the database.
+        Do not provide answers based on assumptions or external knowledge. 
+        If the retrieved information does not contain enough details, respond with 'I don't know'.
+        Prioritize the top context. \n
+        Context information is below.
+        ---------------------
+        {context}
+        ---------------------<|im_end|>
+        <|im_start|>user
+        Given the context information and not prior knowledge, answer the query.
+        {question}<|im_end|>
+        <|im_start|>answer"""
+    )
+    # template = """"
+    # Sử dụng thông tin đã cho để trả lời các câu hỏi.
+    # Nếu thông tin không đủ để đưa ra câu trả lời chính xác, hãy trả lời tôi không biết.
+    # Context: {context}
+    # Question: {question}
+    # """
+    prompt = create_prompt(template)
+    llm_chain  = create_qa_chain(prompt, llm, vectorstore)
     
+    return llm_chain
+    # return llm_chain, vectorstore
     
-    return llm_chain, db
 
 
-def query_and_print(chain, db, question: str, top_k: int = 3):
-    # Use the retriever directly to get the top-k vectors
-    retriever = db.as_retriever(search_kwargs={"k": top_k})
-    docs = retriever.get_relevant_documents(question)
+
+# def query_and_print(chain, db, question: str, top_k: int = 3):
+#     # Use the retriever directly to get the top-k vectors
+#     retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": top_k})
+#     docs = retriever.invoke("Điều 31 nói điều gì?")
     
-    print(f"\nTop-{top_k} Retrieved Documents:")
-    for i, doc in enumerate(docs, start=1):
-        print(f"\nDocument {i}:")
-        print(f"Content: {doc.page_content}")
-        print(f"Metadata: {doc.metadata}")
+#     print(f"\nTop-{top_k} Retrieved Documents:")
+#     for i, doc in enumerate(docs, start=1):
+#         print(f"\nDocument {i}:")
+#         print(f"Content: {doc.page_content}")
+#         print(f"Metadata: {doc.metadata}")
     
-    # Run the question through the QA chain
-    print("\nRunning the QA Chain...")
-    response = chain.invoke({"query": question})
-    print(f"\nLLM Response: {response}")
+#     # Run the question through the QA chain
+#     print("\nRunning the QA Chain...")
+#     response = chain.invoke({"query": question})
+#     print(f"\nLLM Response: {response}")
 
 
 
-# Initialize the chain and database
-llm_chain, db = initialize_chain(collection_name="data_test")
+# # Initialize the chain and database
+# llm_chain, db = initialize_chain(collection_name="data_test")
 
-# Ask a question and print results
-question = "Có bao nhiêu loại tài khoản số đẹp?"
-query_and_print(llm_chain, db, question, top_k=3)
+# # Ask a question and print results
+# question = "Tại chương V, điều 58, trong văn bản có nói người lái xe khi điều khiển phương tiện phải mang theo các giấy tờ gì?"
+# query_and_print(llm_chain, db, question, top_k=10)
 
 
 

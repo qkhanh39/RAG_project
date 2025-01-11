@@ -13,6 +13,7 @@ from seed_data import seed_milvus  # Hàm xử lý dữ liệu
 from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from local_ollama import initialize_chain
+from langchain_ollama import ChatOllama
 
 # === THIẾT LẬP GIAO DIỆN TRANG WEB ===
 def setup_page():
@@ -71,6 +72,11 @@ def handle_local_file():
         st.success("Đã tải dữ liệu thành công!")
 
 # === GIAO DIỆN CHAT CHÍNH ===
+llm = ChatOllama(
+        model="llama3.1", 
+        temperature=0,
+        streaming=True
+    )
 def setup_chat_interface():
     """
     Tạo giao diện chat chính:
@@ -130,6 +136,8 @@ def handle_user_input(msgs, llm_chain):
                 },
                 {"callbacks": [st_callback]}
             )
+
+
             # Lưu và hiển thị câu trả lời
             output = response["result"]
             st.session_state.messages.append({"role": "assistant", "content": output})
