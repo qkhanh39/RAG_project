@@ -38,7 +38,7 @@ def create_retriver(vectorstore, collection_name: str = "data_test"):
 
     ensemble_retriever = EnsembleRetriever(
             retrievers=[milvus_retriever, bm25_retriever],
-            weights=[0.6, 0.4]
+            weights=[0.7, 0.3]
     )
     return ensemble_retriever
 
@@ -60,14 +60,18 @@ def initialize_chain(collection_name: str = "data_test"):
     vectorstore = connect_to_milvus('http://localhost:19530', collection_name)
 
     llm = load_llm()
-    # template = """<|im_start|>system\nSử dụng thông tin sau đây để trả lời câu hỏi. Bắt buộc đưa ra câu trả lời nếu có kết quả trả về từ cơ sở dữ liệu\n
-    # {context}<|im_end|>\n<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant"""
-    template = """"
-    Sử dụng thông tin đã cho để trả lời các câu hỏi.
-    Nếu thông tin không đủ để đưa ra câu trả lời chính xác, hãy đưa ra câu trả lời dựa trên phỏng đoán hợp lý.
-    Context: {context}
-    Question: {question}
-    """
+    template = """<|im_start|>system
+    Chỉ được sử dụng thông tin dưới đây để trả lời. Không được đưa ra câu trả lời dựa trên kiến thức bên ngoài. Nếu không biết, hãy trả lời 'Tôi không biết'.
+    {context}<|im_end|>
+    <|im_start|>user
+    {question}<|im_end|>
+    <|im_start|>assistant"""
+    # template = """"
+    # Sử dụng thông tin đã cho để trả lời các câu hỏi.
+    # Nếu thông tin không đủ để đưa ra câu trả lời chính xác, hãy trả lời tôi không biết.
+    # Context: {context}
+    # Question: {question}
+    # """
     prompt = create_prompt(template)
     llm_chain  = create_qa_chain(prompt, llm, vectorstore)
     
