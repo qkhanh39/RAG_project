@@ -1,27 +1,22 @@
-import os
-import json
 import re
 from langchain_milvus import Milvus
+from typing import List
 from langchain.schema import Document
+from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from uuid import uuid4
-from langchain_ollama import OllamaEmbeddings
-from langchain_community.document_loaders import PyPDFLoader
-import PyPDF2
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-import nltk
 import copy
 import fitz
 from sentence_transformers import SentenceTransformer
 from pyvi.ViTokenizer import tokenize
 import torch
-
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 load_dotenv()
+torch.cuda.empty_cache() 
 
-
-def extract_bold_to_bold_text(pdf_path):
+def extractArticle(pdf_path):
     doc = fitz.open(pdf_path)
-    bold_to_bold_texts = []
+    Article = []
     current_text = ""
 
     for page_num in range(doc.page_count):
@@ -34,161 +29,147 @@ def extract_bold_to_bold_text(pdf_path):
                     for span in line["spans"]:
                         text = span["text"]
                         
-                        # Check if the text is bold
                         if "bold" in span["font"] or span["font"].startswith("bold"):
-                            if current_text:  # If there's text collected, save the current sentence
-                                bold_to_bold_texts.append(current_text.strip())
-                            current_text = text  # Start a new bold-to-bold collection
+                            if current_text: 
+                                Article.append(current_text.strip())
+                            current_text = text  
                         else:
-                            current_text += " " + text  # Add normal text to the current collection
+                            current_text += " " + text 
 
-                # At the end of the block, check if there is any leftover text
+
                 if current_text.strip():
-                    bold_to_bold_texts.append(current_text.strip())
-                    current_text = ""  # Reset for next section
+                    Article.append(current_text.strip())
+                    current_text = "" 
 
-    return bold_to_bold_texts
+    return Article
 
+    
 class EmbeddingFunctionWrapper:
     def __init__(self, model):
-        self.model = model
+        self.model = SentenceTransformer(model, trust_remote_code=True)
 
     def embed_documents(self, texts, batch_size=8):
+        # embeddings = []
+        # for i in range(0, len(texts), batch_size):
+        #     batch_texts = texts[i:i + batch_size]
+        #     tokenized_texts = [tokenize(text) for text in batch_texts]
+        #     embeddings.extend(self.model.encode(tokenized_texts))
+        #     torch.cuda.empty_cache()  # Clear GPU cache
+        # return embeddings
         embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i + batch_size]
-            tokenized_texts = [tokenize(text) for text in batch_texts]
-            embeddings.extend(self.model.encode(tokenized_texts))
-            torch.cuda.empty_cache()  # Clear GPU cache
+        for text in texts:
+            embeddings.append(self.model.encode(text))
+            torch.cuda.empty_cache()
         return embeddings
 
     def embed_query(self, text):
         # You can also add this if needed
-        tokenized_text = tokenize(text)
-        return self.model.encode([tokenized_text])[0]
-    
-embeddings =  EmbeddingFunctionWrapper(SentenceTransformer('dangvantuan/vietnamese-embedding-LongContext', trust_remote_code=True))
-
-def extract_sentences_from_pdf(pdf_file_path):
-    # Open the PDF file
-    with open(pdf_file_path, 'rb') as file:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
+        # tokenized_text = tokenize(text)
         
-        # Extract text from each page
-        for page_num in range(len(reader.pages)):
-            page = reader.pages[page_num]
-            text += page.extract_text()
+        return self.model.encode([text])[0]
 
-    # Use NLTK's sentence tokenizer to split text into sentences
-    sentences = nltk.sent_tokenize(text)
+
+
+def loadEmbeddingModel():
+    return EmbeddingFunctionWrapper('dangvantuan/vietnamese-embedding-LongContext')
+
+embeddings = loadEmbeddingModel()
+
+def extractSentencesFromPdf(pdf_path):
+    sentences = []
     
-    # Filter out sentences that don't end with a period
-    sentences = [sentence for sentence in sentences if sentence.endswith('.')]
+    # Open the PDF file
+    with fitz.open(pdf_path) as doc:
+        for page_num in range(len(doc)):
+            # Get the text of the page
+            page_text = doc[page_num].get_text()
+            
+            # Split text into sentences using a regex
+            page_sentences = re.split(r'(?<=[.!?]) +', page_text)
+            sentences.extend(page_sentences)
     
     return sentences
 
 
-
-
-
-def extract_article(sentences):
-    processed_data = []
-    while True:
-        current = {'page_content': '', 'Chapter': '', 'Article': ''}
-        for sentence in sentences:
-            if 'Chương' in sentence and 'Điều' in sentence:
-                pattern_Chapter = r"Chương (\d+|[IVXLCDM]+)(.*?\n.*?)(?:\n|$)"
-                match_C = re.findall(pattern_Chapter, sentence)
-                print(match_C)
-                # current['Chapter'] = f'Chương {match_C[0][0]} {match_C[0][1].strip()}'
-                pattern_Article = r"Điều \d+[a-zA-Z]?"
-                match_A = re.findall(pattern_Article, sentence)
-                current['Article'] = f'Điều {match_A[0]}'
-            if 'Chương' in sentence:
-                pattern_Chapter = r"Chương (\d+|[IVXLCDM]+)(.*?\n.*?)(?:\n|$)"
-                match = re.findall(pattern_Chapter, sentence)
-                print(match)
-                # current['Chapter'] = f'Chương {match[0][0]} {match[0][1].strip()}'
-            if 'Điều' in sentence and len(sentence) <= 150:
-                pattern_Article = r"Điều \d+[a-zA-Z]?"
-                match = re.findall(pattern_Article, sentence)
-                if match:
-                    current['Article'] = f'{match[0]}'
-            else:
-                current['page_content'] = sentence
-            processed_data.append(copy.copy(current))
-        
-        break    
-                
-    return processed_data
-
-
-def merge_Article(texts):
+def mergeArticle(texts):
     processed = []
     current = ""
     pattern_Article = r"Điều \d+[a-zA-Z]?\."
+    current_article = None
     for text in texts:
         match = re.search(pattern_Article, text)
         if match != None:
-            processed.append(copy.copy(current))
+            processed.append({
+                    'page_content': copy.copy(current.strip()),
+                    'article': copy.copy(current_article) or 'None'
+            })
+            current_article = match.group(0)
             current = text
-                
         else :
             if current == "":
                 current = text
             else:
                 current += " " + text
-
+    if current_article is not None:
+        processed.append({
+            'page_content': copy.copy(current.strip()),
+            'article': copy.copy(current_article)
+    })
     return processed
 
 
-def seed_milvus(URI_link: str, collection_name: str, filename: str, directory: str) -> Milvus:
-    # embeddings = OllamaEmbeddings(
-    #     model="llama3.1" 
-    # )
+def chunkToSmallerText(items):
+    chunked_strings = []
+    separators = [". \n"]
+    text_splitter = RecursiveCharacterTextSplitter(separators=separators, chunk_size=500, chunk_overlap=50)
+    for item in items:
+        chunks = text_splitter.split_text(item['page_content'])
+        for chunk in chunks:
+            chunked_strings.append(
+                {
+                    'page_content': copy.copy(chunk),
+                    'article': copy.copy(item['article'])
+                }
+            )
+    for chunk in chunked_strings:
+        chunk['page_content'] = re.sub(r'\s+', ' ', chunk['page_content']).strip()
+    return chunked_strings
 
-    
-    # local_data, doc_name = load_data_from_local(filename, directory)
-    bolds = extract_bold_to_bold_text(f"{directory}/{filename}")
-    processed = merge_Article(bolds)
-    documents = [Document(page_content = process) for process in processed]
-    # text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    # documents = text_splitter.split_documents(local_data)
-    # chunks = chunking(local_data)
-    # documents = [Document(page_content=chunk) for chunk in chunks]
+def printResult(chunks):
+    for chunk in chunks:
+        print(chunk)
+        print("---------------")
 
-    # processed = [x for x in processed if (len(x['page_content']) <= 512)]
-    
-    # tokenizer_sent = [tokenize(sent) for sent in processed]
-    
-
-    uuids = [str(uuid4()) for _ in range(len(documents))]
+def seed_milvus(URI_link: str, collection_name: str, file_name: str, directory: str) -> Milvus:
+    data = extractSentencesFromPdf(f"{directory}/{file_name}")
+    data = mergeArticle(data)
+    data = chunkToSmallerText(data)
+    printResult(data)
     # documents = [
     #     Document(
     #         page_content= doc['page_content'] or '',
     #         metadata = {
-    #             'Chapter' : doc['Chapter'] or '',
-    #             'Article' : doc['Article'] or '',
+    #             'article': doc['article'] or ''
     #         }
-    #     )   
-    #     for doc in processed
+    #     )
+    #     for doc in data
     # ]
-    vectorstore = Milvus(
-        embedding_function= embeddings,
-        connection_args={"uri": URI_link},
-        collection_name=collection_name,
-        drop_old=True  
-    )
+    # uuids = [str(uuid4()) for _ in range(len(documents))]
 
-    vectorstore.add_documents(documents=documents, ids=uuids)
-    print('vector: ', vectorstore)
-    return vectorstore
+    # vectorstore = Milvus(
+    #     embedding_function= embeddings,
+    #     connection_args={"uri": URI_link},
+    #     collection_name=collection_name,
+    #     drop_old=True  
+    # )
+
+    # vectorstore.add_documents(documents=documents, ids=uuids)
+    # print('vector: ', vectorstore)
     # return vectorstore
 
 
+
 def connect_to_milvus(URI_link: str, collection_name: str) -> Milvus:
-    # embeddings = OllamaEmbeddings(model="llama3.1")
     embeddings_model = embeddings
     vectorstore = Milvus(
         embedding_function=embeddings_model,
@@ -199,7 +180,7 @@ def connect_to_milvus(URI_link: str, collection_name: str) -> Milvus:
 
 def main():
 
-    seed_milvus('http://localhost:19530', 'data_test', 'CS311_law.pdf', 'src/data')
+    seed_milvus('http://localhost:19530', 'data_test', 'legal-document.pdf', 'data')
 
 if __name__ == "__main__":
     main()
