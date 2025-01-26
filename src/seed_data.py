@@ -144,28 +144,28 @@ def seed_milvus(URI_link: str, collection_name: str, file_name: str, directory: 
     data = extractSentencesFromPdf(f"{directory}/{file_name}")
     data = mergeArticle(data)
     data = chunkToSmallerText(data)
-    printResult(data)
-    # documents = [
-    #     Document(
-    #         page_content= doc['page_content'] or '',
-    #         metadata = {
-    #             'article': doc['article'] or ''
-    #         }
-    #     )
-    #     for doc in data
-    # ]
-    # uuids = [str(uuid4()) for _ in range(len(documents))]
+    #printResult(data)
+    documents = [
+        Document(
+            page_content= doc['page_content'] or '',
+            metadata = {
+                'article': doc['article'] or ''
+            }
+        )
+        for doc in data
+    ]
+    uuids = [str(uuid4()) for _ in range(len(documents))]
 
-    # vectorstore = Milvus(
-    #     embedding_function= embeddings,
-    #     connection_args={"uri": URI_link},
-    #     collection_name=collection_name,
-    #     drop_old=True  
-    # )
+    vectorstore = Milvus(
+        embedding_function= embeddings,
+        connection_args={"uri": URI_link},
+        collection_name=collection_name,
+        drop_old=True  
+    )
 
-    # vectorstore.add_documents(documents=documents, ids=uuids)
-    # print('vector: ', vectorstore)
-    # return vectorstore
+    vectorstore.add_documents(documents=documents, ids=uuids)
+    print('vector: ', vectorstore)
+    return vectorstore
 
 
 
