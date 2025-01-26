@@ -12,7 +12,7 @@
 <!-- /code_chunk_output -->
 
 ## Introduction
-This project was created to manage street legal documents in Vietnam for the CS211 course during the Fall 2024 semester at the University of Information Technology, VNUHCM.
+This project was created to manage street legal documents in Vietnam for the CS311 course during the Fall 2024 semester at the University of Information Technology, VNUHCM.
 
 ## Repository structure
 ```txt
@@ -80,7 +80,7 @@ In this project, we used LLaMa 3.1, to install it:
     python seed_data.py
     ```
 ### Usage
-Now you can run and interact with the chatbot by running this command:
+    - Now you can run and interact with the chatbot by running this command:
     ```python
     streamlit run main.py
     ```
